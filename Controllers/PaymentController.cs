@@ -4,6 +4,7 @@ using paypal_sharp.Core.Models;
 using paypal_sharp.Core.Models.Response;
 using paypal_sharp.Core.Services.Http;
 using System.Text.Json;
+using System.Web;
 using PurchaseUnit = fluxeen_api.Core.Models.PurchaseUnit;
 
 namespace paypal_sharp.Controllers
@@ -12,9 +13,10 @@ namespace paypal_sharp.Controllers
     [ApiController]
     public class PaymentController : BaseApiController<PaymentController>
     {
-        public PaymentController()
+        private readonly IConfiguration _configuration;
+        public PaymentController(IConfiguration configuration)
         {
-
+            _configuration = configuration;
         }
 
         [HttpPost("authenticate")]
@@ -29,7 +31,7 @@ namespace paypal_sharp.Controllers
                 new KeyValuePair<string, string>("grant_type", "client_credentials")
             });
 
-            var response = await RequestHandler.Post("https://api-m.sandbox.paypal.com/v1/oauth2/token", content, null, authorizathion);
+            var response = await AppRequest.Post($"{_configuration.GetSection("Payments:Paypal:BaseUrl")}/v1/oauth2/token", content, null, authorizathion);
             string contentResponse = await response.Content.ReadAsStringAsync();
 
             if (!string.IsNullOrWhiteSpace(contentResponse))
@@ -44,10 +46,11 @@ namespace paypal_sharp.Controllers
         [HttpPost("create-order")]
         public async Task<IActionResult> CreateOrder([FromBody] PaymentOrderRequest paymentBody)
         {
-            string token = "";
+            string clientID = _configuration.GetSection("Payments:Paypal:ClientID").Value ?? "";
+            string secretKey = _configuration.GetSection("Payments:Paypal:SecretKey").Value ?? "";
 
             Object responseContent = new Object();
-            string credentials = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes("YOUR_CLIENT_ID:YOUR_SECRET_KEY"));
+            string credentials = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($"{clientID}:{secretKey}"));
             var authorizathion = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", credentials);
             
             var request = new CheckoutOrderRequest
@@ -78,7 +81,7 @@ namespace paypal_sharp.Controllers
             };
 
             var httpContent = JsonContent.Create(request);
-            var response = await RequestHandler.Post("https://api-m.sandbox.paypal.com/v2/checkout/orders", httpContent, null, authorizathion);
+            var response = await AppRequest.Post($"{_configuration.GetSection("Payments:Paypal:BaseUrl")}/v2/checkout/orders", httpContent, null, authorizathion);
             string contentResponse = await response.Content.ReadAsStringAsync();
             var statusCode = (int)response.StatusCode;
 
@@ -86,12 +89,59 @@ namespace paypal_sharp.Controllers
                 return new ObjectResult(responseContent) { StatusCode = statusCode };
 
             responseContent = contentResponse;
-            if (statusCode == 201)
-            {
+
+            if (statusCode == 200)
+                responseContent = JsonSerializer.Deserialize<CreateOrderResponse>(contentResponse);
+            else if (statusCode == 201)
                 responseContent = JsonSerializer.Deserialize<CreatedResponse>(contentResponse);
-            }
+            else
+                responseContent = contentResponse;
+
 
             return new ObjectResult(JsonSerializer.Serialize(responseContent)) { StatusCode = statusCode };
         }
+
+        [HttpGet("capture-order")]
+        public async Task<IActionResult> CaptureOrder()
+        {
+            object finalResponse = null;
+            string token = HttpUtility.HtmlEncode(HttpContext.Request.Query["token"]);
+            string payerId = HttpUtility.HtmlEncode(HttpContext.Request.Query["PayerID"]);
+
+
+            string credentials = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($"{clientID}:{secretKey}"));
+            var authorizathion = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", credentials);
+
+
+            var url = $"{_configuration.GetSection("Payments:Paypal:BaseUrl")}/v2/checkout/orders/{token}/capture";
+            var data = JsonContent.Create(new { });
+
+            var response = await AppRequest.Post(url, data, null, authorizathion);
+            string contentResponse = await response.Content.ReadAsStringAsync();
+
+            var statusCode = (int)response.StatusCode;
+
+
+            if (statusCode == 201)
+            {
+                finalResponse = JsonSerializer.Deserialize<CapturePayment201Response>(contentResponse);
+            }
+            else
+            {
+                finalResponse = JsonSerializer.Deserialize<ErrorResponse>(contentResponse);
+            }
+
+            string pageMessagePaymentResult = "http://localhost:4200/payment-result";
+            return Redirect(pageMessagePaymentResult);
+        }
+
+
+        [HttpGet("cancel-order")]
+        public IActionResult CancelOrder()
+        {
+            string urlSpecificPage = "http://localhost:4200/";
+            return Redirect(urlSpecificPage);
+        }
+
     }
 }

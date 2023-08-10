@@ -1,6 +1,16 @@
+using Microsoft.Extensions.Logging;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+builder.Configuration
+    .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+    .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true)
+    .AddEnvironmentVariables();
+
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddFile(o => o.RootPath = o.RootPath = builder.Environment.ContentRootPath);
+
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
